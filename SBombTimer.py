@@ -44,7 +44,7 @@ class TransparentWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
-        self.key_repeat_delay = 0.35
+        self.key_repeat_delay = 0.4
         self.last_key_press_time = 0
 
     def initUI(self):
@@ -134,6 +134,8 @@ class TransparentWindow(QWidget):
         palette = self.label.palette()
         palette.setColor(QPalette.WindowText, QColor(self.font_color))
         self.label.setPalette(palette)
+        
+        self.label.setContentsMargins(10, 10, 10, 10)
 
     def setupContextMenu(self):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
