@@ -44,6 +44,8 @@ class TransparentWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
+        self.key_repeat_delay = 0.35
+        self.last_key_press_time = 0
 
     def initUI(self):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -52,6 +54,7 @@ class TransparentWindow(QWidget):
         self.setupUIElements()
         self.setupEvents()
         self.setupLogs()
+        self.setupMediaPlayer()
 
     def loadConfig(self):
         config = configparser.ConfigParser()
@@ -99,13 +102,30 @@ class TransparentWindow(QWidget):
     def setupMediaPlayer(self):
         self.start_player = QMediaPlayer()
         self.start_player.setMedia(QMediaContent(QUrl.fromLocalFile("start.mp3")))
-
         self.bomb_player = QMediaPlayer()
         self.bomb_player.setMedia(QMediaContent(QUrl.fromLocalFile("bomb.mp3")))
-
         self.record_player = QMediaPlayer()
         self.record_player.setMedia(QMediaContent(QUrl.fromLocalFile("record.mp3")))
+    
+    def playStartSound(self):
+        self.stopAllSounds()
+        self.start_player.setVolume(self.sound_volume)
+        self.start_player.play()
+
+    def playBombSound(self):
+        self.stopAllSounds()
+        self.bomb_player.setVolume(self.sound_volume)
+        self.bomb_player.play()
+
+    def playRecordSound(self):
+        self.stopAllSounds()
         self.record_player.setVolume(self.sound_volume)
+        self.record_player.play()
+
+    def stopAllSounds(self):
+        self.start_player.stop()
+        self.bomb_player.stop()
+        self.record_player.stop()
 
     def setupLabel(self):
         self.label = QLabel(self.initial_time, self)
@@ -125,7 +145,8 @@ class TransparentWindow(QWidget):
         exit_action.triggered.connect(self.closeApplication)
         return_action = menu.addAction("戻る")
         return_action.triggered.connect(menu.close)
-        menu.setStyleSheet("QMenu{background-color: black; color: white;} QMenu::item:selected{background-color: dimgray;}")
+        menu.setStyleSheet("QMenu { color: white; background-color: rgba(50, 50, 50, 150); }" 
+                           "QMenu::item:selected { background-color: rgba(100, 100, 100, 150); }")
         menu.exec_(self.mapToGlobal(pos))
 
     def closeApplication(self):
@@ -153,8 +174,7 @@ class TransparentWindow(QWidget):
             self.setRunningFontColor()
             self.update_time(self.timer_thread.current_time)
             if self.play_start_sound:
-                self.start_player.setVolume(self.sound_volume)
-                self.start_player.play()
+                self.playStartSound()
 
     def log_time_a(self, event):
         if self.timer_thread.isRunning():
@@ -162,7 +182,7 @@ class TransparentWindow(QWidget):
             self.time_logs_a.append(recorded_time)
             self.combined_logs.append(recorded_time)
             if self.play_record_sound:
-                self.record_player.play()
+                self.playRecordSound()
 
     def log_time_b(self, event):
         if self.timer_thread.isRunning():
@@ -174,7 +194,7 @@ class TransparentWindow(QWidget):
             
             if self.log_time_b_counter <= 2:
                 if self.play_record_sound:
-                    self.record_player.play()
+                    self.playRecordSound()
 
     def log_time_b_sc(self, event):
         recorded_time = self.timer_thread.current_time - self.boom_time
@@ -196,23 +216,29 @@ class TransparentWindow(QWidget):
         self.combined_logs.extend(br_times)
 
     def increment_counters(self, event):
-        if not self.timer_thread.isRunning():
+        current_time = time.time()
+        if not self.timer_thread.isRunning() and current_time - self.last_key_press_time > self.key_repeat_delay:
             new_time_seconds = self.time_to_seconds(self.initial_time) + 10
             self.initial_time = self.seconds_to_time(new_time_seconds)
             self.label.setText(self.initial_time)
             self.label.repaint()
-        else:
+            self.last_key_press_time = current_time
+        elif self.timer_thread.isRunning() and current_time - self.last_key_press_time > self.key_repeat_delay:
+            self.last_key_press_time = current_time
             for i in range(len(self.combined_logs)):
                 self.combined_logs[i] += 1
             self.update_time(self.timer_thread.current_time)
 
     def decrement_counters(self, event):
-        if not self.timer_thread.isRunning():
+        current_time = time.time()
+        if not self.timer_thread.isRunning() and current_time - self.last_key_press_time > self.key_repeat_delay:
             new_time_seconds = max(0, self.time_to_seconds(self.initial_time) - 10)
             self.initial_time = self.seconds_to_time(new_time_seconds)
             self.label.setText(self.initial_time)
             self.label.repaint()
-        else:
+            self.last_key_press_time = current_time
+        elif self.timer_thread.isRunning() and current_time - self.last_key_press_time > self.key_repeat_delay:
+            self.last_key_press_time = current_time
             for i in range(len(self.combined_logs)):
                 if self.combined_logs[i] > 0:
                     self.combined_logs[i] -= 1
