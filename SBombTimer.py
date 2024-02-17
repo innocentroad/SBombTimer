@@ -214,7 +214,7 @@ class TransparentWindow(QWidget):
         while current_br_time > 0:
             br_times.append(current_br_time)
             current_br_time -= self.brilliant_time
-        self.combined_logs = [x for x in self.combined_logs if x > (recorded_time - self.boom_time)]
+        self.combined_logs = [x for x in self.combined_logs if x > (recorded_time)]
         self.combined_logs.extend(br_times)
 
     def increment_counters(self, event):
