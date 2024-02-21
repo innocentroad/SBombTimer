@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QMenu
 from PyQt5.QtGui import QFont, QColor, QPalette, QPainter, QPen, QIcon
 from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal, QUrl
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+from collections import deque
 
 class TimerThread(QThread):
     timer_updated = pyqtSignal(float)
@@ -44,8 +45,10 @@ class TransparentWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
-        self.key_repeat_delay = 0.4
-        self.last_key_press_time = 0
+        self.key_repeat_delay = 0.1  # 連続入力の遅延時間（秒）
+        self.last_key_press_time = 0  # 最後にキーが押された時間
+        self.draw_queue = deque()  # 描画キューを初期化
+        self.draw_pending = False  # 描画が待機中かどうかのフラグを追加
 
     def initUI(self):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -63,7 +66,7 @@ class TransparentWindow(QWidget):
         self.font_color_while_running = config.get('Settings', 'font_color_while_running')
         self.outline_color = config.get('Settings', 'outline_color')
         self.font_size = config.getint('Settings', 'font_size')
-        self.initial_time = config.get('Settings', 'initial_time')
+        self.initial_time = self.reset_time= config.get('Settings', 'initial_time')
         self.window_x = config.getint('Settings', 'window_x')
         self.window_y = config.getint('Settings', 'window_y')
         self.start_key = config.get('Settings', 'start_key')
@@ -104,8 +107,10 @@ class TransparentWindow(QWidget):
         self.start_player.setMedia(QMediaContent(QUrl.fromLocalFile("start.mp3")))
         self.bomb_player = QMediaPlayer()
         self.bomb_player.setMedia(QMediaContent(QUrl.fromLocalFile("bomb.mp3")))
-        self.record_player = QMediaPlayer()
-        self.record_player.setMedia(QMediaContent(QUrl.fromLocalFile("record.mp3")))
+        self.record_player_a = QMediaPlayer()
+        self.record_player_a.setMedia(QMediaContent(QUrl.fromLocalFile("record_a.mp3")))
+        self.record_player_b = QMediaPlayer()
+        self.record_player_b.setMedia(QMediaContent(QUrl.fromLocalFile("record_b.mp3")))
     
     def playStartSound(self):
         self.stopAllSounds()
@@ -117,15 +122,21 @@ class TransparentWindow(QWidget):
         self.bomb_player.setVolume(self.sound_volume)
         self.bomb_player.play()
 
-    def playRecordSound(self):
+    def playRecordSoundA(self):
         self.stopAllSounds()
-        self.record_player.setVolume(self.sound_volume)
-        self.record_player.play()
+        self.record_player_a.setVolume(self.sound_volume)
+        self.record_player_a.play()
+
+    def playRecordSoundB(self):
+        self.stopAllSounds()
+        self.record_player_b.setVolume(self.sound_volume)
+        self.record_player_b.play()
 
     def stopAllSounds(self):
         self.start_player.stop()
         self.bomb_player.stop()
-        self.record_player.stop()
+        self.record_player_a.stop()
+        self.record_player_b.stop()
 
     def setupLabel(self):
         self.label = QLabel(self.initial_time, self)
@@ -134,7 +145,7 @@ class TransparentWindow(QWidget):
         palette = self.label.palette()
         palette.setColor(QPalette.WindowText, QColor(self.font_color))
         self.label.setPalette(palette)
-        
+
         self.label.setContentsMargins(10, 10, 10, 10)
 
     def setupContextMenu(self):
@@ -184,7 +195,7 @@ class TransparentWindow(QWidget):
             self.time_logs_a.append(recorded_time)
             self.combined_logs.append(recorded_time)
             if self.play_record_sound:
-                self.playRecordSound()
+                self.playRecordSoundA()
 
     def log_time_b(self, event):
         if self.timer_thread.isRunning():
@@ -196,7 +207,7 @@ class TransparentWindow(QWidget):
             
             if self.log_time_b_counter <= 2:
                 if self.play_record_sound:
-                    self.playRecordSound()
+                    self.playRecordSoundB()
 
     def log_time_b_sc(self, event):
         recorded_time = self.timer_thread.current_time - self.boom_time
@@ -220,31 +231,39 @@ class TransparentWindow(QWidget):
     def increment_counters(self, event):
         current_time = time.time()
         if not self.timer_thread.isRunning() and current_time - self.last_key_press_time > self.key_repeat_delay:
+            # タイマーが停止している場合はタイマーを増やす
             new_time_seconds = self.time_to_seconds(self.initial_time) + 10
             self.initial_time = self.seconds_to_time(new_time_seconds)
-            self.label.setText(self.initial_time)
-            self.label.repaint()
+            self.label.setText(self.initial_time)  # ラベルテキストを更新
+            self.enqueue_draw_event(self.process_draw)  # 描画イベントを追加
             self.last_key_press_time = current_time
         elif self.timer_thread.isRunning() and current_time - self.last_key_press_time > self.key_repeat_delay:
+            # タイマーが実行中の場合はログを増やす
             self.last_key_press_time = current_time
             for i in range(len(self.combined_logs)):
                 self.combined_logs[i] += 1
-            self.update_time(self.timer_thread.current_time)
+            self.enqueue_draw_event(self.process_draw)  # 描画イベントを追加
 
     def decrement_counters(self, event):
         current_time = time.time()
         if not self.timer_thread.isRunning() and current_time - self.last_key_press_time > self.key_repeat_delay:
+            # タイマーが停止している場合はタイマーを減らす
             new_time_seconds = max(0, self.time_to_seconds(self.initial_time) - 10)
             self.initial_time = self.seconds_to_time(new_time_seconds)
-            self.label.setText(self.initial_time)
-            self.label.repaint()
+            self.label.setText(self.initial_time)  # ラベルテキストを更新
+            self.enqueue_draw_event(self.process_draw)  # 描画イベントを追加
             self.last_key_press_time = current_time
         elif self.timer_thread.isRunning() and current_time - self.last_key_press_time > self.key_repeat_delay:
+            # タイマーが実行中の場合はログを減らす
             self.last_key_press_time = current_time
             for i in range(len(self.combined_logs)):
                 if self.combined_logs[i] > 0:
                     self.combined_logs[i] -= 1
-            self.update_time(self.timer_thread.current_time)
+            self.enqueue_draw_event(self.process_draw)  # 描画イベントを追加
+            
+    def process_draw(self):
+        if self.draw_pending:
+            self.label.repaint()  # 再描画
 
     def time_to_seconds(self, time_str):
         minutes, seconds = map(int, time_str.split(':'))
@@ -267,15 +286,29 @@ class TransparentWindow(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setFont(self.label.font())
         rect = self.label.geometry()
+
+        
+        # アウトライン描画
+        font = self.label.font()
         for dx in [-2, 0, 2]:
             for dy in [-2, 0, 2]:
+                painter.setFont(font)
                 painter.setPen(QPen(QColor(self.outline_color)))
                 painter.drawText(rect.translated(dx, dy), Qt.AlignCenter, self.label.text())
-        painter.setPen(self.label.palette().color(QPalette.WindowText))
-        painter.drawText(rect, Qt.AlignCenter, self.label.text())
+
+        # 描画キューから描画イベントを取り出して実行
+        while self.draw_queue:
+            draw_event = self.draw_queue.popleft()
+            draw_event()
+
         painter.end()
+
+    def enqueue_draw_event(self, draw_event):
+        # 描画イベントをキューに追加
+        self.draw_queue.append(draw_event)
+        # 描画イベントが追加されたらウィジェットを再描画
+        self.update()
 
     def update_time(self, current_time):
         if self.combined_logs:
@@ -315,8 +348,8 @@ class TransparentWindow(QWidget):
         if self.timer_thread.isRunning():
             self.timer_thread.stop()
             self.timer_thread.wait()
-        self.timer_thread.current_time = self.time_to_seconds(self.initial_time)
-        self.label.setText(self.initial_time)
+            self.initial_time = self.seconds_to_time(self.time_to_seconds(self.reset_time) - self.time_to_seconds(self.initial_time) + self.time_to_seconds(self.initial_time))
+            self.label.setText(self.initial_time)
         self.combined_logs.clear()
         self.time_logs_a.clear()
         self.time_logs_b.clear()
